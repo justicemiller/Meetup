@@ -1,5 +1,5 @@
 
-import React, { useEffect, useMemo, useState } from "react";
+mport React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   CalendarDays,
@@ -9,6 +9,11 @@ import {
   Sparkles,
   Trophy,
   UserRound,
+  Users,
+  Clock,
+  Pencil,
+  Trash2,
+  AlertTriangle,
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
@@ -23,7 +28,7 @@ function CardContent({ children, className = "" }) {
 function Button({ children, className = "", ...props }) {
   return (
     <button
-      className={`px-4 py-2 font-semibold transition ${className}`}
+      className={`px-4 py-2 font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
       {...props}
     >
       {children}
@@ -70,16 +75,21 @@ function generateMeetupId() {
   return `meetup-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function normalizeName(name) {
+  return String(name || "").trim().toLowerCase();
+}
+
 export default function App() {
   const today = new Date();
   const year = today.getFullYear();
   const month = today.getMonth();
 
   const [meetupId, setMeetupId] = useState(getMeetupIdFromUrl);
+  const [meetupTitle, setMeetupTitle] = useState("");
+  const [titleInput, setTitleInput] = useState("");
   const [nameInput, setNameInput] = useState(
     () => localStorage.getItem("friend-calendar-name") || ""
   );
-
   const [currentPerson, setCurrentPerson] = useState(
     () => localStorage.getItem("friend-calendar-name") || ""
   );
@@ -89,9 +99,9 @@ export default function App() {
   const [isSaving, setIsSaving] = useState(false);
 
   const monthName = today.toLocaleString("default", { month: "long" });
+  const defaultTitle = `${monthName} Meetup`;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const firstDay = new Date(year, month, 1).getDay();
-
   const shareUrl = `${window.location.origin}/meetup/${meetupId}`;
 
   const calendarCells = useMemo(() => {
@@ -128,19 +138,12 @@ export default function App() {
     return SLOT_ORDER.filter((slot) => slots.includes(slot)).join("+");
   }
 
-  function normalizeName(name) {
-    return name.trim().toLowerCase();
-  }
-
   function getPersonSlots(day, person = currentPerson) {
     const dayVotes = availability[day] || {};
-
-    if (dayVotes[person]) {
-      return dayVotes[person];
-    }
+    const cleanPerson = normalizeName(person);
 
     const matchingName = Object.keys(dayVotes).find(
-      (savedName) => normalizeName(savedName) === normalizeName(person)
+      (savedName) => normalizeName(savedName) === cleanPerson
     );
 
     return matchingName ? dayVotes[matchingName] : [];
@@ -174,20 +177,58 @@ export default function App() {
     return scored.filter((d) => d.score > 0).slice(0, 3);
   }
 
+  function getBestTimeBlocks() {
+    const blocks = [];
+
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      SLOT_ORDER.forEach((slot) => {
+        const count = getSlotCount(day, slot);
+        if (count > 0) {
+          blocks.push({ day, slot, count });
+        }
+      });
+    }
+
+    return blocks
+      .sort((a, b) => b.count - a.count || a.day - b.day)
+      .slice(0, 5);
+  }
+
   async function setupMeetupAndLoadVotes() {
     setStatusMessage("Loading meetup...");
 
-    const { error } = await supabase.from("meetups").upsert({
-      id: meetupId,
-      title: `${monthName} Meetup`,
-      month: month + 1,
-      year,
-    });
+    const { data, error } = await supabase
+      .from("meetups")
+      .select("*")
+      .eq("id", meetupId)
+      .maybeSingle();
 
     if (error) {
-      console.error("Error creating meetup:", error);
-      setStatusMessage("Could not create/load meetup. Check Supabase setup.");
+      console.error("Error loading meetup:", error);
+      setStatusMessage(`Could not load meetup: ${error.message}`);
       return;
+    }
+
+    if (data) {
+      const existingTitle = data.title || defaultTitle;
+      setMeetupTitle(existingTitle);
+      setTitleInput(existingTitle);
+    } else {
+      const { error: insertError } = await supabase.from("meetups").insert({
+        id: meetupId,
+        title: defaultTitle,
+        month: month + 1,
+        year,
+      });
+
+      if (insertError) {
+        console.error("Error creating meetup:", insertError);
+        setStatusMessage(`Could not create meetup: ${insertError.message}`);
+        return;
+      }
+
+      setMeetupTitle(defaultTitle);
+      setTitleInput(defaultTitle);
     }
 
     await loadVotes();
@@ -201,7 +242,7 @@ export default function App() {
 
     if (error) {
       console.error("Error loading votes:", error);
-      setStatusMessage("Could not load votes.");
+      setStatusMessage(`Could not load votes: ${error.message}`);
       return;
     }
 
@@ -209,18 +250,25 @@ export default function App() {
     const nextFriends = new Set();
 
     data.forEach((vote) => {
-      nextFriends.add(vote.person_name);
+      const savedName = String(vote.person_name || "").trim();
+      const savedDay = vote.day;
 
-      if (!nextAvailability[vote.day]) {
-        nextAvailability[vote.day] = {};
+      if (!savedName) return;
+
+      nextFriends.add(savedName);
+
+      if (!nextAvailability[savedDay]) {
+        nextAvailability[savedDay] = {};
       }
 
-      nextAvailability[vote.day][vote.person_name] = vote.slots || [];
+      nextAvailability[savedDay][savedName] = Array.isArray(vote.slots)
+        ? vote.slots
+        : [];
     });
 
     setAvailability(nextAvailability);
     setFriends(Array.from(nextFriends).sort());
-    setStatusMessage("Meetup loaded.");
+    setStatusMessage(`Meetup loaded: ${data.length} saved vote rows.`);
   }
 
   async function saveVote(day, personName, slots) {
@@ -243,14 +291,36 @@ export default function App() {
 
     if (error) {
       console.error("Error saving vote:", error);
-      setStatusMessage("Could not save vote.");
+      setStatusMessage(`Could not save vote: ${error.message}`);
       return;
     }
 
-    setStatusMessage("Saved.");
+    setStatusMessage("Saved. Reloading votes...");
+    await loadVotes();
   }
 
-  function startVoting() {
+  async function saveMeetupTitle() {
+    const cleanTitle = titleInput.trim() || defaultTitle;
+    setIsSaving(true);
+
+    const { error } = await supabase
+      .from("meetups")
+      .update({ title: cleanTitle })
+      .eq("id", meetupId);
+
+    setIsSaving(false);
+
+    if (error) {
+      console.error("Error saving title:", error);
+      setStatusMessage(`Could not save title: ${error.message}`);
+      return;
+    }
+
+    setMeetupTitle(cleanTitle);
+    setStatusMessage("Meetup title saved.");
+  }
+
+  async function startVoting() {
     const clean = nameInput.trim();
 
     if (!clean) {
@@ -261,7 +331,9 @@ export default function App() {
     localStorage.setItem("friend-calendar-name", clean);
     setCurrentPerson(clean);
     setFriends((prev) => (prev.includes(clean) ? prev : [...prev, clean].sort()));
-    setStatusMessage(`Voting as ${clean}.`);
+    setStatusMessage(`Voting as ${clean}. Reloading saved votes...`);
+
+    await loadVotes();
   }
 
   async function cycleAvailability(day) {
@@ -270,7 +342,7 @@ export default function App() {
       return;
     }
 
-    const currentSlots = availability[day]?.[currentPerson] || [];
+    const currentSlots = getPersonSlots(day, currentPerson);
     const currentKey = slotsKey(currentSlots);
     const currentIndex = SLOT_SEQUENCE.findIndex(
       (slots) => slotsKey(slots) === currentKey
@@ -296,6 +368,12 @@ export default function App() {
       return;
     }
 
+    const confirmed = window.confirm(
+      `Reset all votes for ${currentPerson} on this meetup?`
+    );
+
+    if (!confirmed) return;
+
     setIsSaving(true);
 
     const { error } = await supabase
@@ -308,24 +386,61 @@ export default function App() {
 
     if (error) {
       console.error("Error resetting votes:", error);
-      setStatusMessage("Could not reset your votes.");
+      setStatusMessage(`Could not reset your votes: ${error.message}`);
       return;
     }
 
-    setAvailability((prev) => {
-      const next = { ...prev };
-
-      Object.keys(next).forEach((day) => {
-        const dayVotes = { ...next[day] };
-        delete dayVotes[currentPerson];
-        next[day] = dayVotes;
-      });
-
-      return next;
-    });
-
     setStatusMessage("Your votes were reset.");
     await loadVotes();
+  }
+
+  async function clearMeetupVotes() {
+    const confirmed = window.confirm(
+      "Clear ALL votes for this meetup? This cannot be undone."
+    );
+
+    if (!confirmed) return;
+
+    setIsSaving(true);
+
+    const { error } = await supabase
+      .from("availability_votes")
+      .delete()
+      .eq("meetup_id", meetupId);
+
+    setIsSaving(false);
+
+    if (error) {
+      console.error("Error clearing meetup:", error);
+      setStatusMessage(`Could not clear meetup votes: ${error.message}`);
+      return;
+    }
+
+    setAvailability({});
+    setFriends([]);
+    setStatusMessage("All meetup votes cleared.");
+  }
+
+  async function deleteMeetupAndCreateNew() {
+    const confirmed = window.confirm(
+      "Delete this entire meetup and create a new one? This cannot be undone."
+    );
+
+    if (!confirmed) return;
+
+    setIsSaving(true);
+
+    const { error } = await supabase.from("meetups").delete().eq("id", meetupId);
+
+    setIsSaving(false);
+
+    if (error) {
+      console.error("Error deleting meetup:", error);
+      setStatusMessage(`Could not delete meetup: ${error.message}`);
+      return;
+    }
+
+    createNewMeetup();
   }
 
   function copyShareLink() {
@@ -342,8 +457,8 @@ export default function App() {
     setMeetupId(newId);
     setAvailability({});
     setFriends([]);
-    setCurrentPerson("");
-    setNameInput("");
+    setMeetupTitle(defaultTitle);
+    setTitleInput(defaultTitle);
     setStatusMessage("New meetup created.");
   }
 
@@ -353,7 +468,9 @@ export default function App() {
   }
 
   const bestDays = getBestDays();
+  const bestTimeBlocks = getBestTimeBlocks();
   const maxScore = getMaxScore();
+  const displayTitle = meetupTitle || defaultTitle;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 p-4 text-white sm:p-8">
@@ -371,7 +488,7 @@ export default function App() {
             </div>
 
             <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">
-              {monthName} Availability
+              {displayTitle}
             </h1>
 
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">
@@ -411,7 +528,7 @@ export default function App() {
           </Card>
         </motion.div>
 
-        <div className="grid gap-5 lg:grid-cols-[310px_1fr]">
+        <div className="grid gap-5 lg:grid-cols-[330px_1fr]">
           <Card className="rounded-3xl border border-white/10 bg-white/10 text-white shadow-2xl backdrop-blur">
             <CardContent className="space-y-5 p-5">
               <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-4">
@@ -436,6 +553,27 @@ export default function App() {
                     className="flex flex-1 items-center justify-center rounded-2xl bg-white/10 text-sm text-white hover:bg-white/15"
                   >
                     <Sparkles className="mr-2 h-4 w-4" /> New
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-4">
+                <div className="mb-3 flex items-center gap-2 text-lg font-semibold">
+                  <Pencil className="h-5 w-5 text-indigo-200" /> Meetup title
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    value={titleInput}
+                    onChange={(e) => setTitleInput(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && saveMeetupTitle()}
+                    placeholder="Meetup title"
+                    className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-slate-950/50 px-3 py-2 text-sm text-white outline-none ring-indigo-300 transition placeholder:text-slate-500 focus:ring-2"
+                  />
+                  <Button
+                    onClick={saveMeetupTitle}
+                    className="rounded-2xl bg-white/10 text-sm text-white hover:bg-white/15"
+                  >
+                    Save
                   </Button>
                 </div>
               </div>
@@ -495,12 +633,77 @@ export default function App() {
                 </div>
               </div>
 
+              <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-4">
+                <div className="mb-3 flex items-center gap-2 text-lg font-semibold">
+                  <Clock className="h-5 w-5 text-indigo-200" /> Best time blocks
+                </div>
+                <div className="space-y-2 text-sm text-slate-300">
+                  {bestTimeBlocks.length ? (
+                    bestTimeBlocks.map((block) => (
+                      <div
+                        key={`${block.day}-${block.slot}`}
+                        className="flex items-center justify-between rounded-2xl bg-white/10 px-3 py-2"
+                      >
+                        <span>
+                          {monthName} {block.day}, {SLOT_LABELS[block.slot]}
+                        </span>
+                        <span className="font-semibold text-white">
+                          {block.count}/{friends.length || 1}
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <div>No time votes yet</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-4">
+                <div className="mb-3 flex items-center gap-2 text-lg font-semibold">
+                  <Users className="h-5 w-5 text-indigo-200" /> Who has voted
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {friends.length ? (
+                    friends.map((friend) => (
+                      <span
+                        key={friend}
+                        className="rounded-full bg-white/10 px-3 py-1 text-xs text-slate-200"
+                      >
+                        {friend}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-sm text-slate-400">No voters yet</span>
+                  )}
+                </div>
+              </div>
+
               <Button
                 onClick={resetMyVotes}
                 className="w-full rounded-2xl bg-white/10 text-white hover:bg-white/15"
               >
                 <RotateCcw className="mr-2 inline h-4 w-4" /> Reset my votes
               </Button>
+
+              <div className="rounded-3xl border border-red-300/20 bg-red-950/20 p-4">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-red-100">
+                  <AlertTriangle className="h-4 w-4" /> Admin tools
+                </div>
+                <div className="grid gap-2">
+                  <Button
+                    onClick={clearMeetupVotes}
+                    className="rounded-2xl bg-red-300/15 text-sm text-red-100 hover:bg-red-300/25"
+                  >
+                    Clear all votes
+                  </Button>
+                  <Button
+                    onClick={deleteMeetupAndCreateNew}
+                    className="rounded-2xl bg-red-400 text-sm text-red-950 hover:bg-red-300"
+                  >
+                    <Trash2 className="mr-2 inline h-4 w-4" /> Delete meetup
+                  </Button>
+                </div>
+              </div>
             </CardContent>
           </Card>
 
