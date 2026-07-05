@@ -7,13 +7,15 @@ import {
   RotateCcw,
   Sparkles,
   Trophy,
-  
   UserRound,
   Users,
   Clock,
   Pencil,
   Trash2,
   AlertTriangle,
+  ShieldCheck,
+  Lock,
+  LogOut,
 } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
@@ -61,6 +63,9 @@ const SLOT_COLORS = {
   evening: "bg-amber-300",
 };
 
+const ADMIN_STORAGE_KEY = "friend-calendar-owner-mode";
+const OWNER_CODE = import.meta.env.VITE_OWNER_CODE || "change-me";
+
 function getMeetupIdFromUrl() {
   const parts = window.location.pathname.split("/").filter(Boolean);
 
@@ -77,6 +82,22 @@ function generateMeetupId() {
 
 function normalizeName(name) {
   return String(name || "").trim().toLowerCase();
+}
+
+function getOwnerModeFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const ownerCodeFromUrl = params.get("owner");
+
+  if (ownerCodeFromUrl && ownerCodeFromUrl === OWNER_CODE) {
+    localStorage.setItem(ADMIN_STORAGE_KEY, "true");
+
+    const cleanUrl = `${window.location.origin}${window.location.pathname}`;
+    window.history.replaceState({}, "", cleanUrl);
+
+    return true;
+  }
+
+  return localStorage.getItem(ADMIN_STORAGE_KEY) === "true";
 }
 
 export default function App() {
@@ -97,12 +118,15 @@ export default function App() {
   const [availability, setAvailability] = useState({});
   const [statusMessage, setStatusMessage] = useState("Loading meetup...");
   const [isSaving, setIsSaving] = useState(false);
+  const [isOwner, setIsOwner] = useState(getOwnerModeFromUrl);
+  const [ownerCodeInput, setOwnerCodeInput] = useState("");
 
   const monthName = today.toLocaleString("default", { month: "long" });
   const defaultTitle = `${monthName} Meetup`;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const firstDay = new Date(year, month, 1).getDay();
   const shareUrl = `${window.location.origin}/meetup/${meetupId}`;
+  const ownerUrl = `${shareUrl}?owner=${OWNER_CODE}`;
 
   const calendarCells = useMemo(() => {
     const blanks = Array.from({ length: firstDay }, () => null);
@@ -300,6 +324,11 @@ export default function App() {
   }
 
   async function saveMeetupTitle() {
+    if (!isOwner) {
+      setStatusMessage("Owner mode required to edit the meetup title.");
+      return;
+    }
+
     const cleanTitle = titleInput.trim() || defaultTitle;
     setIsSaving(true);
 
@@ -395,6 +424,11 @@ export default function App() {
   }
 
   async function clearMeetupVotes() {
+    if (!isOwner) {
+      setStatusMessage("Owner mode required to clear all votes.");
+      return;
+    }
+
     const confirmed = window.confirm(
       "Clear ALL votes for this meetup? This cannot be undone."
     );
@@ -422,6 +456,11 @@ export default function App() {
   }
 
   async function deleteMeetupAndCreateNew() {
+    if (!isOwner) {
+      setStatusMessage("Owner mode required to delete this meetup.");
+      return;
+    }
+
     const confirmed = window.confirm(
       "Delete this entire meetup and create a new one? This cannot be undone."
     );
@@ -445,10 +484,20 @@ export default function App() {
 
   function copyShareLink() {
     navigator.clipboard.writeText(shareUrl);
-    setStatusMessage("Share link copied.");
+    setStatusMessage("Friend share link copied.");
+  }
+
+  function copyOwnerLink() {
+    navigator.clipboard.writeText(ownerUrl);
+    setStatusMessage("Owner link copied. Do not share this with friends.");
   }
 
   function createNewMeetup() {
+    if (!isOwner) {
+      setStatusMessage("Owner mode required to create a new meetup from this page.");
+      return;
+    }
+
     const newId = generateMeetupId();
     const newPath = `/meetup/${newId}`;
 
@@ -460,6 +509,23 @@ export default function App() {
     setMeetupTitle(defaultTitle);
     setTitleInput(defaultTitle);
     setStatusMessage("New meetup created.");
+  }
+
+  function unlockOwnerMode() {
+    if (ownerCodeInput.trim() === OWNER_CODE) {
+      localStorage.setItem(ADMIN_STORAGE_KEY, "true");
+      setIsOwner(true);
+      setOwnerCodeInput("");
+      setStatusMessage("Owner mode unlocked on this device.");
+    } else {
+      setStatusMessage("Incorrect owner code.");
+    }
+  }
+
+  function leaveOwnerMode() {
+    localStorage.removeItem(ADMIN_STORAGE_KEY);
+    setIsOwner(false);
+    setStatusMessage("Owner mode hidden on this device.");
   }
 
   function fillLabel(slots) {
@@ -492,8 +558,8 @@ export default function App() {
             </h1>
 
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">
-              Share one link. Everyone enters their name, then taps each day to
-              pick morning, afternoon, evening, or any combination.
+              Enter your name, then tap each day to pick morning, afternoon,
+              evening, or any combination.
             </p>
 
             <p className="mt-2 text-xs text-indigo-200">
@@ -531,52 +597,89 @@ export default function App() {
         <div className="grid gap-5 lg:grid-cols-[330px_1fr]">
           <Card className="rounded-3xl border border-white/10 bg-white/10 text-white shadow-2xl backdrop-blur">
             <CardContent className="space-y-5 p-5">
-              <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-4">
-                <div className="mb-2 flex items-center gap-2 text-lg font-semibold">
-                  <Link className="h-5 w-5 text-indigo-200" /> Share link
-                </div>
+              {isOwner ? (
+                <div className="rounded-3xl border border-emerald-300/20 bg-emerald-950/20 p-4">
+                  <div className="mb-2 flex items-center gap-2 text-lg font-semibold text-emerald-100">
+                    <ShieldCheck className="h-5 w-5" /> Owner controls
+                  </div>
 
-                <div className="break-all rounded-2xl bg-white/10 p-3 text-xs text-slate-200">
-                  {shareUrl}
-                </div>
+                  <div className="mb-3 rounded-2xl bg-white/10 p-3 text-xs text-slate-200">
+                    <div className="mb-1 font-semibold text-white">Friend link</div>
+                    <div className="break-all">{shareUrl}</div>
+                  </div>
 
-                <div className="mt-3 flex gap-2">
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={copyShareLink}
+                      className="flex flex-1 items-center justify-center rounded-2xl bg-indigo-300 text-sm text-slate-950 hover:bg-indigo-200"
+                    >
+                      <Copy className="mr-2 h-4 w-4" /> Copy friend link
+                    </Button>
+                    <Button
+                      onClick={copyOwnerLink}
+                      className="flex flex-1 items-center justify-center rounded-2xl bg-emerald-300 text-sm text-emerald-950 hover:bg-emerald-200"
+                    >
+                      <ShieldCheck className="mr-2 h-4 w-4" /> Copy owner link
+                    </Button>
+                  </div>
+
                   <Button
-                    onClick={copyShareLink}
-                    className="flex flex-1 items-center justify-center rounded-2xl bg-indigo-300 text-sm text-slate-950 hover:bg-indigo-200"
+                    onClick={leaveOwnerMode}
+                    className="mt-3 w-full rounded-2xl bg-white/10 text-sm text-white hover:bg-white/15"
                   >
-                    <Copy className="mr-2 h-4 w-4" /> Copy
-                  </Button>
-
-                  <Button
-                    onClick={createNewMeetup}
-                    className="flex flex-1 items-center justify-center rounded-2xl bg-white/10 text-sm text-white hover:bg-white/15"
-                  >
-                    <Sparkles className="mr-2 h-4 w-4" /> New
-                  </Button>
-                </div>
-              </div>
-
-              <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-4">
-                <div className="mb-3 flex items-center gap-2 text-lg font-semibold">
-                  <Pencil className="h-5 w-5 text-indigo-200" /> Meetup title
-                </div>
-                <div className="flex gap-2">
-                  <input
-                    value={titleInput}
-                    onChange={(e) => setTitleInput(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && saveMeetupTitle()}
-                    placeholder="Meetup title"
-                    className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-slate-950/50 px-3 py-2 text-sm text-white outline-none ring-indigo-300 transition placeholder:text-slate-500 focus:ring-2"
-                  />
-                  <Button
-                    onClick={saveMeetupTitle}
-                    className="rounded-2xl bg-white/10 text-sm text-white hover:bg-white/15"
-                  >
-                    Save
+                    <LogOut className="mr-2 inline h-4 w-4" /> Hide owner controls
                   </Button>
                 </div>
-              </div>
+              ) : (
+                <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-4">
+                  <div className="mb-3 flex items-center gap-2 text-lg font-semibold">
+                    <Lock className="h-5 w-5 text-indigo-200" /> Owner access
+                  </div>
+                  <p className="mb-3 text-sm text-slate-400">
+                    Friends can vote only. Enter the owner code to show share,
+                    title, and admin controls on this device.
+                  </p>
+                  <div className="flex gap-2">
+                    <input
+                      value={ownerCodeInput}
+                      onChange={(e) => setOwnerCodeInput(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && unlockOwnerMode()}
+                      placeholder="Owner code"
+                      type="password"
+                      className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-slate-950/50 px-3 py-2 text-sm text-white outline-none ring-indigo-300 transition placeholder:text-slate-500 focus:ring-2"
+                    />
+                    <Button
+                      onClick={unlockOwnerMode}
+                      className="rounded-2xl bg-white/10 text-sm text-white hover:bg-white/15"
+                    >
+                      Unlock
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {isOwner && (
+                <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-4">
+                  <div className="mb-3 flex items-center gap-2 text-lg font-semibold">
+                    <Pencil className="h-5 w-5 text-indigo-200" /> Meetup title
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      value={titleInput}
+                      onChange={(e) => setTitleInput(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && saveMeetupTitle()}
+                      placeholder="Meetup title"
+                      className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-slate-950/50 px-3 py-2 text-sm text-white outline-none ring-indigo-300 transition placeholder:text-slate-500 focus:ring-2"
+                    />
+                    <Button
+                      onClick={saveMeetupTitle}
+                      className="rounded-2xl bg-white/10 text-sm text-white hover:bg-white/15"
+                    >
+                      Save
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               <div>
                 <div className="mb-3 flex items-center gap-2 text-lg font-semibold">
@@ -685,25 +788,35 @@ export default function App() {
                 <RotateCcw className="mr-2 inline h-4 w-4" /> Reset my votes
               </Button>
 
-              <div className="rounded-3xl border border-red-300/20 bg-red-950/20 p-4">
-                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-red-100">
-                  <AlertTriangle className="h-4 w-4" /> Admin tools
+              {isOwner && (
+                <div className="rounded-3xl border border-red-300/20 bg-red-950/20 p-4">
+                  <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-red-100">
+                    <AlertTriangle className="h-4 w-4" /> Admin tools
+                  </div>
+                  <div className="mb-3 flex gap-2">
+                    <Button
+                      onClick={createNewMeetup}
+                      className="flex flex-1 items-center justify-center rounded-2xl bg-white/10 text-sm text-white hover:bg-white/15"
+                    >
+                      <Sparkles className="mr-2 h-4 w-4" /> New meetup
+                    </Button>
+                  </div>
+                  <div className="grid gap-2">
+                    <Button
+                      onClick={clearMeetupVotes}
+                      className="rounded-2xl bg-red-300/15 text-sm text-red-100 hover:bg-red-300/25"
+                    >
+                      Clear all votes
+                    </Button>
+                    <Button
+                      onClick={deleteMeetupAndCreateNew}
+                      className="rounded-2xl bg-red-400 text-sm text-red-950 hover:bg-red-300"
+                    >
+                      <Trash2 className="mr-2 inline h-4 w-4" /> Delete meetup
+                    </Button>
+                  </div>
                 </div>
-                <div className="grid gap-2">
-                  <Button
-                    onClick={clearMeetupVotes}
-                    className="rounded-2xl bg-red-300/15 text-sm text-red-100 hover:bg-red-300/25"
-                  >
-                    Clear all votes
-                  </Button>
-                  <Button
-                    onClick={deleteMeetupAndCreateNew}
-                    className="rounded-2xl bg-red-400 text-sm text-red-950 hover:bg-red-300"
-                  >
-                    <Trash2 className="mr-2 inline h-4 w-4" /> Delete meetup
-                  </Button>
-                </div>
-              </div>
+              )}
             </CardContent>
           </Card>
 
