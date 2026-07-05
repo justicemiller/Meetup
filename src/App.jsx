@@ -558,9 +558,14 @@ export default function App() {
       return;
     }
 
+    // Clear the visible calendar and voter list immediately.
     setAvailability({});
     setFriends([]);
-    setStatusMessage("All meetup votes cleared.");
+
+    // Re-check Supabase so the UI stays synced with the database.
+    await loadVotes();
+
+    setStatusMessage("All votes and voter history were cleared.");
   }
 
   async function deleteMeetupAndCreateNew() {
