@@ -76,8 +76,13 @@ export default function App() {
   const month = today.getMonth();
 
   const [meetupId, setMeetupId] = useState(getMeetupIdFromUrl);
-  const [nameInput, setNameInput] = useState("");
-  const [currentPerson, setCurrentPerson] = useState("");
+  const [nameInput, setNameInput] = useState(
+    () => localStorage.getItem("friend-calendar-name") || ""
+  );
+
+  const [currentPerson, setCurrentPerson] = useState(
+    () => localStorage.getItem("friend-calendar-name") || ""
+  );
   const [friends, setFriends] = useState([]);
   const [availability, setAvailability] = useState({});
   const [statusMessage, setStatusMessage] = useState("Loading meetup...");
@@ -123,8 +128,22 @@ export default function App() {
     return SLOT_ORDER.filter((slot) => slots.includes(slot)).join("+");
   }
 
+  function normalizeName(name) {
+    return name.trim().toLowerCase();
+  }
+
   function getPersonSlots(day, person = currentPerson) {
-    return availability[day]?.[person] || [];
+    const dayVotes = availability[day] || {};
+
+    if (dayVotes[person]) {
+      return dayVotes[person];
+    }
+
+    const matchingName = Object.keys(dayVotes).find(
+      (savedName) => normalizeName(savedName) === normalizeName(person)
+    );
+
+    return matchingName ? dayVotes[matchingName] : [];
   }
 
   function getSlotCount(day, slot) {
@@ -239,6 +258,7 @@ export default function App() {
       return;
     }
 
+    localStorage.setItem("friend-calendar-name", clean);
     setCurrentPerson(clean);
     setFriends((prev) => (prev.includes(clean) ? prev : [...prev, clean].sort()));
     setStatusMessage(`Voting as ${clean}.`);
