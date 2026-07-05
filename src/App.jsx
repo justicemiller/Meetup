@@ -3,19 +3,22 @@ import { motion } from "framer-motion";
 import {
   AlertTriangle,
   CalendarDays,
-  ChevronLeft,
-  ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Clock,
   Copy,
   Download,
-  Link,
+  Link as LinkIcon,
   Lock,
   LogOut,
   MessageCircle,
+  Moon,
   Pencil,
   RotateCcw,
   ShieldCheck,
   Sparkles,
+  Sunrise,
+  Sun,
   Trash2,
   Trophy,
   UserRound,
@@ -63,8 +66,29 @@ const SLOT_LABELS = {
 
 const SLOT_COLORS = {
   morning: "bg-sky-300",
-  afternoon: "bg-violet-300",
-  evening: "bg-amber-300",
+  afternoon: "bg-amber-300",
+  evening: "bg-violet-400",
+};
+
+const SLOT_LEGEND = {
+  morning: {
+    label: "Morning",
+    Icon: Sunrise,
+    chip: "bg-sky-300/20 text-sky-100 border-sky-200/20",
+    dot: "bg-sky-300",
+  },
+  afternoon: {
+    label: "Afternoon",
+    Icon: Sun,
+    chip: "bg-amber-300/20 text-amber-100 border-amber-200/20",
+    dot: "bg-amber-300",
+  },
+  evening: {
+    label: "Evening",
+    Icon: Moon,
+    chip: "bg-violet-400/20 text-violet-100 border-violet-200/20",
+    dot: "bg-violet-400",
+  },
 };
 
 const ADMIN_STORAGE_KEY = "friend-calendar-owner-mode";
@@ -117,6 +141,30 @@ function buildMonthOptions() {
   });
 }
 
+function SectionHeader({ icon: Icon, title, subtitle }) {
+  return (
+    <div className="mb-3 flex items-start gap-2">
+      {Icon && <Icon className="mt-0.5 h-5 w-5 text-indigo-200" />}
+      <div>
+        <div className="font-semibold text-white">{title}</div>
+        {subtitle && <div className="text-xs leading-5 text-slate-400">{subtitle}</div>}
+      </div>
+    </div>
+  );
+}
+
+function ExpandButton({ open, onClick, children, className = "" }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex w-full items-center justify-between rounded-2xl bg-white/10 px-4 py-3 text-left text-sm font-semibold text-white transition hover:bg-white/15 ${className}`}
+    >
+      <span>{children}</span>
+      {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+    </button>
+  );
+}
+
 export default function App() {
   const today = new Date();
   const currentYear = today.getFullYear();
@@ -141,6 +189,10 @@ export default function App() {
   const [isSaving, setIsSaving] = useState(false);
   const [isOwner, setIsOwner] = useState(getOwnerModeFromUrl);
   const [ownerCodeInput, setOwnerCodeInput] = useState("");
+  const [showTapOrder, setShowTapOrder] = useState(false);
+  const [showOwnerPanel, setShowOwnerPanel] = useState(false);
+  const [showInvitedEditor, setShowInvitedEditor] = useState(false);
+  const [showDangerZone, setShowDangerZone] = useState(false);
 
   const monthOptions = useMemo(() => buildMonthOptions(), []);
   const monthName = new Date(selectedYear, selectedMonth, 1).toLocaleString("default", {
@@ -221,15 +273,6 @@ export default function App() {
     return Math.max(friends.length * 3, 1);
   }
 
-  function getBestDays() {
-    const scored = Array.from({ length: daysInMonth }, (_, i) => {
-      const day = i + 1;
-      return { day, score: getTotalScore(day) };
-    }).sort((a, b) => b.score - a.score);
-
-    return scored.filter((d) => d.score > 0).slice(0, 3);
-  }
-
   function getBestTimeBlocks(limit = 5) {
     const blocks = [];
 
@@ -272,9 +315,11 @@ export default function App() {
     if (data) {
       const existingMonth = Number.isInteger(data.month) ? data.month - 1 : currentMonth;
       const existingYear = Number.isInteger(data.year) ? data.year : currentYear;
-      const existingTitle = data.title || new Date(existingYear, existingMonth, 1).toLocaleString("default", {
-        month: "long",
-      }) + " Meetup";
+      const existingTitle =
+        data.title ||
+        `${new Date(existingYear, existingMonth, 1).toLocaleString("default", {
+          month: "long",
+        })} Meetup`;
       const existingInvited = Array.isArray(data.invited_names) ? data.invited_names : [];
 
       setSelectedMonth(existingMonth);
@@ -409,7 +454,9 @@ export default function App() {
       .map((name) => name.trim())
       .filter(Boolean);
 
-    const uniqueInvited = Array.from(new Map(nextInvited.map((name) => [normalizeName(name), name])).values());
+    const uniqueInvited = Array.from(
+      new Map(nextInvited.map((name) => [normalizeName(name), name])).values()
+    );
 
     setIsSaving(true);
 
@@ -558,13 +605,9 @@ export default function App() {
       return;
     }
 
-    // Clear the visible calendar and voter list immediately.
     setAvailability({});
     setFriends([]);
-
-    // Re-check Supabase so the UI stays synced with the database.
     await loadVotes();
-
     setStatusMessage("All votes and voter history were cleared.");
   }
 
@@ -616,6 +659,7 @@ export default function App() {
 
     const lines = [
       `${meetupTitle || defaultTitle} Availability Results`,
+      `Month: ${monthYearLabel}`,
       `Link: ${shareUrl}`,
       "",
       "Best exact options:",
@@ -685,7 +729,6 @@ export default function App() {
     return slots.map((slot) => SLOT_LABELS[slot]).join(", ");
   }
 
-  const bestDays = getBestDays();
   const bestTimeBlocks = getBestTimeBlocks();
   const bestExactOption = bestTimeBlocks[0];
   const missingVoters = getMissingVoters();
@@ -694,221 +737,59 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 p-3 text-white sm:p-8">
-      <div className="mx-auto max-w-6xl">
+      <div className="mx-auto max-w-6xl space-y-5">
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="mb-5 flex flex-col gap-4 sm:mb-6 sm:flex-row sm:items-end sm:justify-between"
+          className="space-y-3"
         >
-          <div>
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs text-indigo-100 shadow-sm backdrop-blur sm:text-sm">
-              <CalendarDays className="h-4 w-4" />
-              No-login meetup planner
-            </div>
+          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs text-indigo-100 shadow-sm backdrop-blur sm:text-sm">
+            <CalendarDays className="h-4 w-4" />
+            No-login meetup planner
+          </div>
 
+          <div>
             <h1 className="text-3xl font-semibold tracking-tight sm:text-5xl">
               {displayTitle}
             </h1>
-
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">
-              Enter your name, then tap each day to pick morning, afternoon,
-              evening, or any combination.
-            </p>
-
             <p className="mt-2 text-xs text-indigo-200">
               {statusMessage} {isSaving ? "Saving..." : ""}
             </p>
           </div>
-
-          <Card className="rounded-3xl border border-emerald-300/20 bg-emerald-950/25 text-white shadow-2xl backdrop-blur">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2 text-sm font-medium text-emerald-100">
-                <Trophy className="h-4 w-4" /> Best exact option
-              </div>
-
-              {bestExactOption ? (
-                <div className="mt-2">
-                  <div className="text-xl font-bold">
-                    {monthName} {bestExactOption.day}, {SLOT_LABELS[bestExactOption.slot]}
-                  </div>
-                  <div className="mt-1 text-sm text-emerald-100">
-                    {bestExactOption.count}/{friends.length || 1} available
-                  </div>
-                  <div className="mt-2 text-xs text-slate-300">
-                    {bestExactOption.voters.join(", ")}
-                  </div>
-                </div>
-              ) : (
-                <div className="mt-2 text-sm text-slate-300">No votes yet</div>
-              )}
-            </CardContent>
-          </Card>
         </motion.div>
 
-        <div className="grid gap-5 lg:grid-cols-[340px_1fr]">
-          <Card className="rounded-3xl border border-white/10 bg-white/10 text-white shadow-2xl backdrop-blur">
-            <CardContent className="space-y-5 p-4 sm:p-5">
-              {isOwner ? (
-                <div className="rounded-3xl border border-emerald-300/20 bg-emerald-950/20 p-4">
-                  <div className="mb-2 flex items-center gap-2 text-lg font-semibold text-emerald-100">
-                    <ShieldCheck className="h-5 w-5" /> Owner controls
-                  </div>
+        <Card className="rounded-3xl border border-white/10 bg-white/10 text-white shadow-2xl backdrop-blur">
+          <CardContent className="space-y-4 p-4 sm:p-5">
+            <SectionHeader
+              icon={CalendarDays}
+              title="How to vote"
+              subtitle="Enter your name, then tap a day to cycle through morning, afternoon, evening, combinations, or clear. Your picks save automatically."
+            />
 
-                  <div className="mb-3 rounded-2xl bg-white/10 p-3 text-xs text-slate-200">
-                    <div className="mb-1 font-semibold text-white">Friend link</div>
-                    <div className="break-all">{shareUrl}</div>
-                  </div>
-
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <Button
-                      onClick={copyShareLink}
-                      className="flex items-center justify-center rounded-2xl bg-indigo-300 text-sm text-slate-950 hover:bg-indigo-200"
-                    >
-                      <Copy className="mr-2 h-4 w-4" /> Copy link
-                    </Button>
-                    <Button
-                      onClick={textInvite}
-                      className="flex items-center justify-center rounded-2xl bg-sky-300 text-sm text-sky-950 hover:bg-sky-200"
-                    >
-                      <MessageCircle className="mr-2 h-4 w-4" /> Text invite
-                    </Button>
-                    <Button
-                      onClick={copyResults}
-                      className="flex items-center justify-center rounded-2xl bg-violet-300 text-sm text-violet-950 hover:bg-violet-200"
-                    >
-                      <Download className="mr-2 h-4 w-4" /> Copy results
-                    </Button>
-                    <Button
-                      onClick={copyOwnerLink}
-                      className="flex items-center justify-center rounded-2xl bg-emerald-300 text-sm text-emerald-950 hover:bg-emerald-200"
-                    >
-                      <ShieldCheck className="mr-2 h-4 w-4" /> Owner link
-                    </Button>
-                  </div>
-
-                  <Button
-                    onClick={leaveOwnerMode}
-                    className="mt-3 w-full rounded-2xl bg-white/10 text-sm text-white hover:bg-white/15"
+            <div className="grid gap-2 sm:grid-cols-3">
+              {SLOT_ORDER.map((slot) => {
+                const { Icon, label, chip, dot } = SLOT_LEGEND[slot];
+                return (
+                  <div
+                    key={slot}
+                    className={`flex items-center gap-2 rounded-2xl border px-3 py-2 text-sm ${chip}`}
                   >
-                    <LogOut className="mr-2 inline h-4 w-4" /> Hide owner controls
-                  </Button>
-                </div>
-              ) : (
-                <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-4">
-                  <div className="mb-3 flex items-center gap-2 text-lg font-semibold">
-                    <Lock className="h-5 w-5 text-indigo-200" /> Owner access
+                    <span className={`h-2.5 w-2.5 rounded-full ${dot}`} />
+                    <Icon className="h-4 w-4" />
+                    <span className="font-semibold">{label}</span>
                   </div>
-                  <p className="mb-3 text-sm text-slate-400">
-                    Friends can vote only. Enter the owner code to show owner tools on this device.
-                  </p>
-                  <div className="flex gap-2">
-                    <input
-                      value={ownerCodeInput}
-                      onChange={(e) => setOwnerCodeInput(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && unlockOwnerMode()}
-                      placeholder="Owner code"
-                      type="password"
-                      className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-slate-950/50 px-3 py-2 text-sm text-white outline-none ring-indigo-300 transition placeholder:text-slate-500 focus:ring-2"
-                    />
-                    <Button
-                      onClick={unlockOwnerMode}
-                      className="rounded-2xl bg-white/10 text-sm text-white hover:bg-white/15"
-                    >
-                      Unlock
-                    </Button>
-                  </div>
-                </div>
-              )}
+                );
+              })}
+            </div>
 
-              {isOwner && (
-                <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-4">
-                  <div className="mb-3 flex items-center gap-2 text-lg font-semibold">
-                    <Pencil className="h-5 w-5 text-indigo-200" /> Meetup setup
-                  </div>
+            <div>
+              <ExpandButton open={showTapOrder} onClick={() => setShowTapOrder((prev) => !prev)}>
+                Show tap order
+              </ExpandButton>
 
-                  <div className="space-y-3">
-                    <div>
-                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
-                        Meetup title
-                      </label>
-                      <div className="flex gap-2">
-                        <input
-                          value={titleInput}
-                          onChange={(e) => setTitleInput(e.target.value)}
-                          onKeyDown={(e) => e.key === "Enter" && saveMeetupTitle()}
-                          placeholder="Meetup title"
-                          className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-slate-950/50 px-3 py-2 text-sm text-white outline-none ring-indigo-300 transition placeholder:text-slate-500 focus:ring-2"
-                        />
-                        <Button
-                          onClick={saveMeetupTitle}
-                          className="rounded-2xl bg-white/10 text-sm text-white hover:bg-white/15"
-                        >
-                          Save
-                        </Button>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
-                        Calendar month
-                      </label>
-                      <select
-                        value={`${selectedYear}-${selectedMonth}`}
-                        onChange={(e) => {
-                          const option = monthOptions.find((item) => item.value === e.target.value);
-                          if (option) saveMeetupMonth(option.month, option.year);
-                        }}
-                        className="w-full rounded-2xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white outline-none ring-indigo-300 focus:ring-2"
-                      >
-                        {monthOptions.map((option) => (
-                          <option key={option.value} value={option.value} className="bg-slate-950 text-white">
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div>
-                <div className="mb-3 flex items-center gap-2 text-lg font-semibold">
-                  <UserRound className="h-5 w-5 text-indigo-200" /> Your name
-                </div>
-
-                <div className="flex gap-2">
-                  <input
-                    value={nameInput}
-                    onChange={(e) => setNameInput(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && startVoting()}
-                    placeholder="Enter your name"
-                    className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-slate-950/50 px-3 py-2 text-sm text-white outline-none ring-indigo-300 transition placeholder:text-slate-500 focus:ring-2"
-                  />
-
-                  <Button
-                    onClick={startVoting}
-                    className="rounded-2xl bg-indigo-300 text-slate-950 hover:bg-indigo-200"
-                  >
-                    Start
-                  </Button>
-                </div>
-
-                {currentPerson && (
-                  <div className="mt-3 rounded-2xl bg-indigo-300 px-4 py-3 text-sm font-semibold text-slate-950">
-                    Voting as {currentPerson}
-                  </div>
-                )}
-              </div>
-
-              <div className="rounded-2xl bg-slate-950/40 p-4 text-sm text-slate-300 sm:hidden">
-                <div className="mb-2 font-semibold text-white">Quick guide</div>
-                <div>Tap a day to cycle through Morning, Afternoon, Evening combinations.</div>
-              </div>
-
-              <div className="hidden rounded-2xl bg-slate-950/40 p-4 text-sm text-slate-300 sm:block">
-                <div className="mb-3 font-semibold text-white">Tap cycle</div>
-                <div className="space-y-1 leading-6">
+              {showTapOrder && (
+                <div className="mt-2 rounded-2xl bg-slate-950/40 p-4 text-sm leading-6 text-slate-300">
                   <div>1 tap = Morning</div>
                   <div>2 taps = Morning + Afternoon</div>
                   <div>3 taps = Morning + Afternoon + Evening</div>
@@ -918,278 +799,487 @@ export default function App() {
                   <div>7 taps = Evening only</div>
                   <div>8 taps = Clear</div>
                 </div>
-              </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
 
-              <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                <div className="rounded-2xl bg-sky-300/25 p-2 text-sky-100">
-                  Morning
-                </div>
-                <div className="rounded-2xl bg-violet-300/25 p-2 text-violet-100">
-                  Afternoon
-                </div>
-                <div className="rounded-2xl bg-amber-300/25 p-2 text-amber-100">
-                  Evening
-                </div>
-              </div>
+        <Card className="rounded-3xl border border-emerald-300/20 bg-emerald-950/25 text-white shadow-2xl backdrop-blur">
+          <CardContent className="p-4 sm:p-5">
+            <div className="flex items-center gap-2 text-sm font-medium text-emerald-100">
+              <Trophy className="h-4 w-4" /> Best choice so far
+            </div>
 
-              <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-4">
-                <div className="mb-3 flex items-center gap-2 text-lg font-semibold">
-                  <Clock className="h-5 w-5 text-indigo-200" /> Best exact options
+            {bestExactOption ? (
+              <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                <div>
+                  <div className="text-2xl font-bold">
+                    {monthName} {bestExactOption.day}, {SLOT_LABELS[bestExactOption.slot]}
+                  </div>
+                  <div className="mt-1 text-sm text-emerald-100">
+                    {bestExactOption.count} of {friends.length || 1} available
+                  </div>
+                  <div className="mt-2 text-xs text-slate-300">
+                    {bestExactOption.voters.join(", ")}
+                  </div>
                 </div>
-                <div className="space-y-2 text-sm text-slate-300">
-                  {bestTimeBlocks.length ? (
-                    bestTimeBlocks.map((block, index) => (
-                      <div
-                        key={`${block.day}-${block.slot}`}
-                        className={`rounded-2xl px-3 py-2 ${index === 0 ? "bg-emerald-300/20 ring-1 ring-emerald-300/30" : "bg-white/10"}`}
+                {isOwner && (
+                  <Button
+                    onClick={copyResults}
+                    className="rounded-2xl bg-emerald-300 text-sm text-emerald-950 hover:bg-emerald-200"
+                  >
+                    <Download className="mr-2 inline h-4 w-4" /> Copy results
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="mt-2 text-sm text-slate-300">No votes yet</div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-3xl border border-white/10 bg-white/10 text-white shadow-2xl backdrop-blur">
+          <CardContent className="p-4 sm:p-5">
+            <SectionHeader icon={Clock} title="Best exact options" subtitle="Ranked by how many people are available for each time block." />
+            <div className="space-y-2 text-sm text-slate-300">
+              {bestTimeBlocks.length ? (
+                bestTimeBlocks.map((block, index) => (
+                  <div
+                    key={`${block.day}-${block.slot}`}
+                    className={`rounded-2xl px-3 py-2 ${
+                      index === 0 ? "bg-emerald-300/20 ring-1 ring-emerald-300/30" : "bg-white/10"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-semibold text-white">
+                        {monthName} {block.day}, {SLOT_LABELS[block.slot]}
+                      </span>
+                      <span className="shrink-0 font-semibold text-white">
+                        {block.count}/{friends.length || 1}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-xs text-slate-300">
+                      {block.voters.join(", ")}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div>No time votes yet</div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-3xl border border-white/10 bg-white/10 text-white shadow-2xl backdrop-blur">
+          <CardContent className="p-4 sm:p-5">
+            <SectionHeader icon={Users} title="Voting status" subtitle="See who has voted and who is still missing from the invited list." />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Who has voted
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {friends.length ? (
+                    friends.map((friend) => (
+                      <span
+                        key={friend}
+                        className="rounded-full bg-white/10 px-3 py-1 text-xs text-slate-200"
                       >
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="font-semibold text-white">
-                            {monthName} {block.day}, {SLOT_LABELS[block.slot]}
-                          </span>
-                          <span className="shrink-0 font-semibold text-white">
-                            {block.count}/{friends.length || 1}
-                          </span>
-                        </div>
-                        <div className="mt-1 text-xs text-slate-300">
-                          {block.voters.join(", ")}
-                        </div>
-                      </div>
+                        {friend}
+                      </span>
                     ))
                   ) : (
-                    <div>No time votes yet</div>
+                    <span className="text-sm text-slate-400">No voters yet</span>
                   )}
                 </div>
               </div>
 
-              {isOwner && (
-                <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-4">
-                  <div className="mb-3 flex items-center gap-2 text-lg font-semibold">
-                    <Users className="h-5 w-5 text-indigo-200" /> Invited friends
-                  </div>
-                  <textarea
-                    value={invitedInput}
-                    onChange={(e) => setInvitedInput(e.target.value)}
-                    placeholder="One friend per line, or comma-separated"
-                    rows={4}
-                    className="w-full rounded-2xl border border-white/10 bg-slate-950/50 px-3 py-2 text-sm text-white outline-none ring-indigo-300 transition placeholder:text-slate-500 focus:ring-2"
-                  />
-                  <Button
-                    onClick={saveInvitedFriends}
-                    className="mt-2 w-full rounded-2xl bg-white/10 text-sm text-white hover:bg-white/15"
-                  >
-                    Save invited list
-                  </Button>
+              <div>
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                  Still waiting on
                 </div>
-              )}
-
-              <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-4">
-                <div className="mb-3 flex items-center gap-2 text-lg font-semibold">
-                  <Users className="h-5 w-5 text-indigo-200" /> Voting status
-                </div>
-                <div className="space-y-3">
-                  <div>
-                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                      Who has voted
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {friends.length ? (
-                        friends.map((friend) => (
-                          <span
-                            key={friend}
-                            className="rounded-full bg-white/10 px-3 py-1 text-xs text-slate-200"
-                          >
-                            {friend}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="text-sm text-slate-400">No voters yet</span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                      Still waiting on
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {invitedFriends.length ? (
-                        missingVoters.length ? (
-                          missingVoters.map((friend) => (
-                            <span
-                              key={friend}
-                              className="rounded-full bg-amber-300/15 px-3 py-1 text-xs text-amber-100"
-                            >
-                              {friend}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="rounded-full bg-emerald-300/15 px-3 py-1 text-xs text-emerald-100">
-                            Everyone invited has voted
-                          </span>
-                        )
-                      ) : (
-                        <span className="text-sm text-slate-400">Owner can add an invited list</span>
-                      )}
-                    </div>
-                  </div>
+                <div className="flex flex-wrap gap-2">
+                  {invitedFriends.length ? (
+                    missingVoters.length ? (
+                      missingVoters.map((friend) => (
+                        <span
+                          key={friend}
+                          className="rounded-full bg-amber-300/15 px-3 py-1 text-xs text-amber-100"
+                        >
+                          {friend}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="rounded-full bg-emerald-300/15 px-3 py-1 text-xs text-emerald-100">
+                        Everyone invited has voted
+                      </span>
+                    )
+                  ) : (
+                    <span className="text-sm text-slate-400">No invited list set</span>
+                  )}
                 </div>
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-3xl border border-white/10 bg-white/10 text-white shadow-2xl backdrop-blur">
+          <CardContent className="p-4 sm:p-5">
+            <SectionHeader icon={UserRound} title="Your vote" subtitle="Enter your name first, then tap calendar days below." />
+            <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-center">
+              <input
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && startVoting()}
+                placeholder="Enter your name"
+                className="min-w-0 rounded-2xl border border-white/10 bg-slate-950/50 px-3 py-2 text-sm text-white outline-none ring-indigo-300 transition placeholder:text-slate-500 focus:ring-2"
+              />
+
+              <Button
+                onClick={startVoting}
+                className="rounded-2xl bg-indigo-300 text-slate-950 hover:bg-indigo-200"
+              >
+                Start
+              </Button>
 
               <Button
                 onClick={resetMyVotes}
-                className="w-full rounded-2xl bg-white/10 text-white hover:bg-white/15"
+                className="rounded-2xl bg-white/10 text-white hover:bg-white/15"
               >
                 <RotateCcw className="mr-2 inline h-4 w-4" /> Reset my votes
               </Button>
+            </div>
 
-              {isOwner && (
-                <div className="rounded-3xl border border-red-300/20 bg-red-950/20 p-4">
-                  <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-red-100">
-                    <AlertTriangle className="h-4 w-4" /> Admin tools
-                  </div>
-                  <div className="mb-3 flex gap-2">
-                    <Button
-                      onClick={createNewMeetup}
-                      className="flex flex-1 items-center justify-center rounded-2xl bg-white/10 text-sm text-white hover:bg-white/15"
-                    >
-                      <Sparkles className="mr-2 h-4 w-4" /> New meetup
-                    </Button>
-                  </div>
-                  <div className="grid gap-2">
-                    <Button
-                      onClick={clearMeetupVotes}
-                      className="rounded-2xl bg-red-300/15 text-sm text-red-100 hover:bg-red-300/25"
-                    >
-                      Clear all votes
-                    </Button>
-                    <Button
-                      onClick={deleteMeetupAndCreateNew}
-                      className="rounded-2xl bg-red-400 text-sm text-red-950 hover:bg-red-300"
-                    >
-                      <Trash2 className="mr-2 inline h-4 w-4" /> Delete meetup
-                    </Button>
-                  </div>
+            {currentPerson && (
+              <div className="mt-3 rounded-2xl bg-indigo-300 px-4 py-3 text-sm font-semibold text-slate-950">
+                Voting as {currentPerson}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="overflow-hidden rounded-3xl border border-white/10 bg-white/10 text-white shadow-2xl backdrop-blur">
+          <CardContent className="p-3 sm:p-5">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-lg font-semibold">{monthYearLabel}</div>
+                <div className="text-xs text-slate-400">Morning / Afternoon / Evening</div>
+              </div>
+              {currentPerson && (
+                <div className="hidden rounded-full bg-indigo-300 px-3 py-1 text-xs font-semibold text-slate-950 sm:block">
+                  Voting as {currentPerson}
                 </div>
               )}
-            </CardContent>
-          </Card>
+            </div>
 
-          <Card className="overflow-hidden rounded-3xl border border-white/10 bg-white/10 text-white shadow-2xl backdrop-blur">
-            <CardContent className="p-3 sm:p-5">
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-lg font-semibold">{monthYearLabel}</div>
-                  <div className="text-xs text-slate-400">Morning / Afternoon / Evening</div>
-                </div>
-                <div className="hidden gap-1 sm:flex">
-                  <ChevronLeft className="h-5 w-5 text-slate-500" />
-                  <ChevronRight className="h-5 w-5 text-slate-500" />
-                </div>
-              </div>
+            <div className="mb-3 grid grid-cols-7 gap-1 text-center text-[10px] font-semibold uppercase tracking-wider text-indigo-100/80 sm:mb-4 sm:gap-2 sm:text-xs">
+              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+                <div key={d}>{d}</div>
+              ))}
+            </div>
 
-              <div className="mb-3 grid grid-cols-7 gap-1 text-center text-[10px] font-semibold uppercase tracking-wider text-indigo-100/80 sm:mb-4 sm:gap-2 sm:text-xs">
-                {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-                  <div key={d}>{d}</div>
-                ))}
-              </div>
-
-              <div className="grid grid-cols-7 gap-1 sm:gap-2">
-                {calendarCells.map((day, idx) => {
-                  if (!day) {
-                    return (
-                      <div
-                        key={`blank-${idx}`}
-                        className="min-h-[70px] rounded-3xl sm:aspect-square sm:min-h-0"
-                      />
-                    );
-                  }
-
-                  const mySlots = getPersonSlots(day);
-                  const totalScore = getTotalScore(day);
-                  const groupPercent = Math.round((totalScore / maxScore) * 100);
-                  const isToday = isCurrentCalendarMonth && day === today.getDate();
-
+            <div className="grid grid-cols-7 gap-1 sm:gap-2">
+              {calendarCells.map((day, idx) => {
+                if (!day) {
                   return (
-                    <div key={day} className="relative pt-5 sm:pt-6">
-                      {isToday && (
-                        <div className="absolute left-1/2 top-0 -translate-x-1/2 rounded-full bg-emerald-300 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-950 shadow-sm">
-                          Today
+                    <div
+                      key={`blank-${idx}`}
+                      className="min-h-[70px] rounded-3xl sm:aspect-square sm:min-h-0"
+                    />
+                  );
+                }
+
+                const mySlots = getPersonSlots(day);
+                const totalScore = getTotalScore(day);
+                const groupPercent = Math.round((totalScore / maxScore) * 100);
+                const isToday = isCurrentCalendarMonth && day === today.getDate();
+
+                return (
+                  <div key={day} className="relative pt-5 sm:pt-6">
+                    {isToday && (
+                      <div className="absolute left-1/2 top-0 -translate-x-1/2 rounded-full bg-emerald-300 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-emerald-950 shadow-sm">
+                        Today
+                      </div>
+                    )}
+
+                    <motion.button
+                      whileTap={{ scale: 0.96 }}
+                      onClick={() => cycleAvailability(day)}
+                      aria-label={`Day ${day}, ${fillLabel(
+                        mySlots
+                      )}, group score ${totalScore} out of ${maxScore}`}
+                      className={`relative min-h-[70px] w-full overflow-hidden rounded-2xl border p-1.5 text-left shadow-lg transition hover:-translate-y-0.5 hover:shadow-indigo-950/40 sm:aspect-square sm:min-h-0 sm:rounded-3xl sm:p-2 ${
+                        isToday ? "border-emerald-300/80" : "border-white/10"
+                      } ${
+                        currentPerson
+                          ? "bg-slate-950/50"
+                          : "cursor-not-allowed bg-slate-950/30 opacity-70"
+                      }`}
+                    >
+                      <div className="absolute inset-0 grid grid-cols-3">
+                        {SLOT_ORDER.map((slot) => (
+                          <div
+                            key={slot}
+                            className={`h-full transition-all duration-300 ${
+                              mySlots.includes(slot)
+                                ? SLOT_COLORS[slot]
+                                : "bg-transparent"
+                            }`}
+                            style={{
+                              opacity: mySlots.includes(slot) ? 0.72 : 0,
+                            }}
+                          />
+                        ))}
+                      </div>
+
+                      <div
+                        className="absolute bottom-0 left-0 h-1 bg-emerald-300/80 transition-all duration-300 sm:h-1.5"
+                        style={{ width: `${groupPercent}%` }}
+                      />
+
+                      <div className="relative z-10 flex h-full min-h-[58px] flex-col justify-between sm:min-h-0">
+                        <div className="flex items-start justify-between gap-1">
+                          <span
+                            className={`grid h-7 w-7 place-items-center rounded-full text-xs font-bold sm:h-8 sm:w-8 sm:text-sm ${
+                              mySlots.length
+                                ? "bg-slate-950/60 text-white"
+                                : "bg-white/10 text-slate-200"
+                            }`}
+                          >
+                            {day}
+                          </span>
+                        </div>
+
+                        <div>
+                          <div className="mb-1 grid grid-cols-3 gap-0.5 sm:gap-1">
+                            {SLOT_ORDER.map((slot) => (
+                              <div
+                                key={slot}
+                                className="rounded-full bg-slate-950/45 px-0.5 py-0.5 text-center text-[8px] font-semibold text-white sm:px-1 sm:text-[9px]"
+                              >
+                                {getSlotCount(day, slot)}
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="hidden text-[10px] text-slate-300 sm:block">
+                            M / A / E votes
+                          </div>
+                        </div>
+                      </div>
+                    </motion.button>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="pb-6">
+          {!showOwnerPanel ? (
+            <button
+              onClick={() => setShowOwnerPanel(true)}
+              className="mx-auto flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-slate-400 transition hover:bg-white/10 hover:text-white"
+            >
+              <Lock className="h-3.5 w-3.5" /> Owner?
+            </button>
+          ) : (
+            <Card className="rounded-3xl border border-white/10 bg-white/10 text-white shadow-2xl backdrop-blur">
+              <CardContent className="space-y-4 p-4 sm:p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 font-semibold text-white">
+                    <ShieldCheck className="h-5 w-5 text-emerald-200" /> Owner tools
+                  </div>
+                  <Button
+                    onClick={() => setShowOwnerPanel(false)}
+                    className="rounded-2xl bg-white/10 text-xs text-white hover:bg-white/15"
+                  >
+                    Hide
+                  </Button>
+                </div>
+
+                {!isOwner ? (
+                  <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-4">
+                    <SectionHeader
+                      icon={Lock}
+                      title="Owner access"
+                      subtitle="Friends can vote only. Enter the owner code to show owner tools on this device."
+                    />
+                    <div className="flex gap-2">
+                      <input
+                        value={ownerCodeInput}
+                        onChange={(e) => setOwnerCodeInput(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && unlockOwnerMode()}
+                        placeholder="Owner code"
+                        type="password"
+                        className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-slate-950/50 px-3 py-2 text-sm text-white outline-none ring-indigo-300 transition placeholder:text-slate-500 focus:ring-2"
+                      />
+                      <Button
+                        onClick={unlockOwnerMode}
+                        className="rounded-2xl bg-white/10 text-sm text-white hover:bg-white/15"
+                      >
+                        Unlock
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="rounded-3xl border border-emerald-300/20 bg-emerald-950/20 p-4">
+                      <SectionHeader
+                        icon={LinkIcon}
+                        title="Share and export"
+                        subtitle="Copy the friend link, text the invite, or export a summary."
+                      />
+
+                      <div className="mb-3 rounded-2xl bg-white/10 p-3 text-xs text-slate-200">
+                        <div className="mb-1 font-semibold text-white">Friend link</div>
+                        <div className="break-all">{shareUrl}</div>
+                      </div>
+
+                      <div className="grid gap-2 sm:grid-cols-4">
+                        <Button
+                          onClick={copyShareLink}
+                          className="flex items-center justify-center rounded-2xl bg-indigo-300 text-sm text-slate-950 hover:bg-indigo-200"
+                        >
+                          <Copy className="mr-2 h-4 w-4" /> Copy
+                        </Button>
+                        <Button
+                          onClick={textInvite}
+                          className="flex items-center justify-center rounded-2xl bg-sky-300 text-sm text-sky-950 hover:bg-sky-200"
+                        >
+                          <MessageCircle className="mr-2 h-4 w-4" /> Text
+                        </Button>
+                        <Button
+                          onClick={copyResults}
+                          className="flex items-center justify-center rounded-2xl bg-violet-300 text-sm text-violet-950 hover:bg-violet-200"
+                        >
+                          <Download className="mr-2 h-4 w-4" /> Results
+                        </Button>
+                        <Button
+                          onClick={copyOwnerLink}
+                          className="flex items-center justify-center rounded-2xl bg-emerald-300 text-sm text-emerald-950 hover:bg-emerald-200"
+                        >
+                          <ShieldCheck className="mr-2 h-4 w-4" /> Owner
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-4">
+                      <SectionHeader icon={Pencil} title="Meetup setup" />
+
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div>
+                          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                            Meetup title
+                          </label>
+                          <div className="flex gap-2">
+                            <input
+                              value={titleInput}
+                              onChange={(e) => setTitleInput(e.target.value)}
+                              onKeyDown={(e) => e.key === "Enter" && saveMeetupTitle()}
+                              placeholder="Meetup title"
+                              className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-slate-950/50 px-3 py-2 text-sm text-white outline-none ring-indigo-300 transition placeholder:text-slate-500 focus:ring-2"
+                            />
+                            <Button
+                              onClick={saveMeetupTitle}
+                              className="rounded-2xl bg-white/10 text-sm text-white hover:bg-white/15"
+                            >
+                              Save
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400">
+                            Calendar month
+                          </label>
+                          <select
+                            value={`${selectedYear}-${selectedMonth}`}
+                            onChange={(e) => {
+                              const option = monthOptions.find((item) => item.value === e.target.value);
+                              if (option) saveMeetupMonth(option.month, option.year);
+                            }}
+                            className="w-full rounded-2xl border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white outline-none ring-indigo-300 focus:ring-2"
+                          >
+                            {monthOptions.map((option) => (
+                              <option key={option.value} value={option.value} className="bg-slate-950 text-white">
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-4">
+                      <ExpandButton open={showInvitedEditor} onClick={() => setShowInvitedEditor((prev) => !prev)}>
+                        Edit invited list
+                      </ExpandButton>
+
+                      {showInvitedEditor && (
+                        <div className="mt-3">
+                          <textarea
+                            value={invitedInput}
+                            onChange={(e) => setInvitedInput(e.target.value)}
+                            placeholder="One friend per line, or comma-separated"
+                            rows={4}
+                            className="w-full rounded-2xl border border-white/10 bg-slate-950/50 px-3 py-2 text-sm text-white outline-none ring-indigo-300 transition placeholder:text-slate-500 focus:ring-2"
+                          />
+                          <Button
+                            onClick={saveInvitedFriends}
+                            className="mt-2 w-full rounded-2xl bg-white/10 text-sm text-white hover:bg-white/15"
+                          >
+                            Save invited list
+                          </Button>
                         </div>
                       )}
-
-                      <motion.button
-                        whileTap={{ scale: 0.96 }}
-                        onClick={() => cycleAvailability(day)}
-                        aria-label={`Day ${day}, ${fillLabel(
-                          mySlots
-                        )}, group score ${totalScore} out of ${maxScore}`}
-                        className={`relative min-h-[70px] w-full overflow-hidden rounded-2xl border p-1.5 text-left shadow-lg transition hover:-translate-y-0.5 hover:shadow-indigo-950/40 sm:aspect-square sm:min-h-0 sm:rounded-3xl sm:p-2 ${
-                          isToday ? "border-emerald-300/80" : "border-white/10"
-                        } ${
-                          currentPerson
-                            ? "bg-slate-950/50"
-                            : "cursor-not-allowed bg-slate-950/30 opacity-70"
-                        }`}
-                      >
-                        <div className="absolute inset-0 grid grid-cols-3">
-                          {SLOT_ORDER.map((slot) => (
-                            <div
-                              key={slot}
-                              className={`h-full transition-all duration-300 ${
-                                mySlots.includes(slot)
-                                  ? SLOT_COLORS[slot]
-                                  : "bg-transparent"
-                              }`}
-                              style={{
-                                opacity: mySlots.includes(slot) ? 0.72 : 0,
-                              }}
-                            />
-                          ))}
-                        </div>
-
-                        <div
-                          className="absolute bottom-0 left-0 h-1 bg-emerald-300/80 transition-all duration-300 sm:h-1.5"
-                          style={{ width: `${groupPercent}%` }}
-                        />
-
-                        <div className="relative z-10 flex h-full min-h-[58px] flex-col justify-between sm:min-h-0">
-                          <div className="flex items-start justify-between gap-1">
-                            <span
-                              className={`grid h-7 w-7 place-items-center rounded-full text-xs font-bold sm:h-8 sm:w-8 sm:text-sm ${
-                                mySlots.length
-                                  ? "bg-slate-950/60 text-white"
-                                  : "bg-white/10 text-slate-200"
-                              }`}
-                            >
-                              {day}
-                            </span>
-                          </div>
-
-                          <div>
-                            <div className="mb-1 grid grid-cols-3 gap-0.5 sm:gap-1">
-                              {SLOT_ORDER.map((slot) => (
-                                <div
-                                  key={slot}
-                                  className="rounded-full bg-slate-950/45 px-0.5 py-0.5 text-center text-[8px] font-semibold text-white sm:px-1 sm:text-[9px]"
-                                >
-                                  {getSlotCount(day, slot)}
-                                </div>
-                              ))}
-                            </div>
-
-                            <div className="hidden text-[10px] text-slate-300 sm:block">
-                              M / A / E votes
-                            </div>
-                          </div>
-                        </div>
-                      </motion.button>
                     </div>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
+
+                    <div className="rounded-3xl border border-red-300/20 bg-red-950/20 p-4">
+                      <ExpandButton
+                        open={showDangerZone}
+                        onClick={() => setShowDangerZone((prev) => !prev)}
+                        className="bg-red-300/10 text-red-100 hover:bg-red-300/20"
+                      >
+                        Danger zone
+                      </ExpandButton>
+
+                      {showDangerZone && (
+                        <div className="mt-3 grid gap-2">
+                          <Button
+                            onClick={clearMeetupVotes}
+                            className="rounded-2xl bg-red-300/15 text-sm text-red-100 hover:bg-red-300/25"
+                          >
+                            Clear all votes
+                          </Button>
+                          <Button
+                            onClick={deleteMeetupAndCreateNew}
+                            className="rounded-2xl bg-red-400 text-sm text-red-950 hover:bg-red-300"
+                          >
+                            <Trash2 className="mr-2 inline h-4 w-4" /> Delete meetup
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+
+                    <Button
+                      onClick={createNewMeetup}
+                      className="w-full rounded-2xl bg-white/10 text-sm text-white hover:bg-white/15"
+                    >
+                      <Sparkles className="mr-2 inline h-4 w-4" /> New meetup
+                    </Button>
+
+                    <Button
+                      onClick={leaveOwnerMode}
+                      className="w-full rounded-2xl bg-white/10 text-sm text-white hover:bg-white/15"
+                    >
+                      <LogOut className="mr-2 inline h-4 w-4" /> Lock owner controls
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </div>
       </div>
     </div>
