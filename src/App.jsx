@@ -1,5 +1,4 @@
-
-mport React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   CalendarDays,
@@ -8,6 +7,7 @@ import {
   RotateCcw,
   Sparkles,
   Trophy,
+  
   UserRound,
   Users,
   Clock,
