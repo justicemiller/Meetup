@@ -1,18 +1,21 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   AlertTriangle,
+  Brush,
   CalendarDays,
   ChevronDown,
   ChevronUp,
   Clock,
   Copy,
   Download,
+  Eraser,
   Link as LinkIcon,
   Lock,
   LogOut,
   MessageCircle,
   Moon,
+  MousePointerClick,
   Pencil,
   RotateCcw,
   ShieldCheck,
@@ -90,6 +93,17 @@ const SLOT_LEGEND = {
     dot: "bg-violet-400",
   },
 };
+
+const QUICK_FILL_PATTERNS = [
+  { id: "morning", label: "Morning", slots: ["morning"], Icon: Sunrise, className: "bg-sky-300/20 text-sky-100 border-sky-200/20" },
+  { id: "afternoon", label: "Afternoon", slots: ["afternoon"], Icon: Sun, className: "bg-amber-300/20 text-amber-100 border-amber-200/20" },
+  { id: "evening", label: "Evening", slots: ["evening"], Icon: Moon, className: "bg-violet-400/20 text-violet-100 border-violet-200/20" },
+  { id: "morning-afternoon", label: "M + A", slots: ["morning", "afternoon"], Icon: Sunrise, className: "bg-cyan-300/20 text-cyan-100 border-cyan-200/20" },
+  { id: "afternoon-evening", label: "A + E", slots: ["afternoon", "evening"], Icon: Sun, className: "bg-orange-300/20 text-orange-100 border-orange-200/20" },
+  { id: "morning-evening", label: "M + E", slots: ["morning", "evening"], Icon: Moon, className: "bg-indigo-300/20 text-indigo-100 border-indigo-200/20" },
+  { id: "all-day", label: "Full day", slots: ["morning", "afternoon", "evening"], Icon: Sparkles, className: "bg-emerald-300/20 text-emerald-100 border-emerald-200/20" },
+  { id: "clear", label: "Clear", slots: [], Icon: Eraser, className: "bg-slate-300/10 text-slate-200 border-slate-200/10" },
+];
 
 const ADMIN_STORAGE_KEY = "friend-calendar-owner-mode";
 const OWNER_CODE = import.meta.env.VITE_OWNER_CODE || "change-me";
@@ -193,8 +207,13 @@ export default function App() {
   const [showOwnerPanel, setShowOwnerPanel] = useState(false);
   const [showInvitedEditor, setShowInvitedEditor] = useState(false);
   const [showDangerZone, setShowDangerZone] = useState(false);
+  const [entryMode, setEntryMode] = useState("cycle");
+  const [selectedPatternId, setSelectedPatternId] = useState("all-day");
+  const [isPainting, setIsPainting] = useState(false);
+  const paintedDaysRef = useRef(new Set());
 
   const monthOptions = useMemo(() => buildMonthOptions(), []);
+  const selectedPattern = QUICK_FILL_PATTERNS.find((pattern) => pattern.id === selectedPatternId) || QUICK_FILL_PATTERNS[6];
   const monthName = new Date(selectedYear, selectedMonth, 1).toLocaleString("default", {
     month: "long",
   });
@@ -238,6 +257,23 @@ export default function App() {
       supabase.removeChannel(channel);
     };
   }, [meetupId]);
+
+  useEffect(() => {
+    const finishPainting = () => {
+      if (!isPainting) return;
+      setIsPainting(false);
+      paintedDaysRef.current.clear();
+      loadVotes();
+    };
+
+    window.addEventListener("pointerup", finishPainting);
+    window.addEventListener("pointercancel", finishPainting);
+
+    return () => {
+      window.removeEventListener("pointerup", finishPainting);
+      window.removeEventListener("pointercancel", finishPainting);
+    };
+  }, [isPainting, meetupId]);
 
   function slotsKey(slots) {
     return SLOT_ORDER.filter((slot) => slots.includes(slot)).join("+");
@@ -389,7 +425,7 @@ export default function App() {
     setStatusMessage(`Meetup loaded: ${data.length} saved vote rows.`);
   }
 
-  async function saveVote(day, personName, slots) {
+  async function saveVote(day, personName, slots, shouldReload = true) {
     setIsSaving(true);
 
     const { error } = await supabase.from("availability_votes").upsert(
@@ -413,8 +449,8 @@ export default function App() {
       return;
     }
 
-    setStatusMessage("Saved. Reloading votes...");
-    await loadVotes();
+    setStatusMessage(shouldReload ? "Saved. Reloading votes..." : "Saved.");
+    if (shouldReload) await loadVotes();
   }
 
   async function saveMeetupTitle() {
@@ -544,6 +580,42 @@ export default function App() {
     }));
 
     await saveVote(day, currentPerson, nextSlots);
+  }
+
+  async function paintAvailability(day) {
+    if (!currentPerson) {
+      setStatusMessage("Enter your name before using quick fill.");
+      return;
+    }
+
+    if (paintedDaysRef.current.has(day)) return;
+    paintedDaysRef.current.add(day);
+
+    const nextSlots = selectedPattern.slots;
+
+    setAvailability((prev) => ({
+      ...prev,
+      [day]: {
+        ...(prev[day] || {}),
+        [currentPerson]: nextSlots,
+      },
+    }));
+
+    await saveVote(day, currentPerson, nextSlots, false);
+  }
+
+  function handleDayPointerDown(event, day) {
+    if (entryMode !== "paint") return;
+
+    event.preventDefault();
+    paintedDaysRef.current = new Set();
+    setIsPainting(true);
+    paintAvailability(day);
+  }
+
+  function handleDayPointerEnter(day) {
+    if (entryMode !== "paint" || !isPainting) return;
+    paintAvailability(day);
   }
 
   async function resetMyVotes() {
@@ -764,7 +836,7 @@ export default function App() {
             <SectionHeader
               icon={CalendarDays}
               title="How to vote"
-              subtitle="Enter your name, then tap a day to cycle through morning, afternoon, evening, combinations, or clear. Your picks save automatically."
+              subtitle="Enter your name, then tap a day to cycle through morning, afternoon, evening, combinations, or clear. Use Quick Fill if you want to paint the same availability across multiple days."
             />
 
             <div className="grid gap-2 sm:grid-cols-3">
@@ -924,37 +996,95 @@ export default function App() {
         </Card>
 
         <Card className="rounded-3xl border border-white/10 bg-white/10 text-white shadow-2xl backdrop-blur">
-          <CardContent className="p-4 sm:p-5">
-            <SectionHeader icon={UserRound} title="Your vote" subtitle="Enter your name first, then tap calendar days below." />
-            <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-center">
-              <input
-                value={nameInput}
-                onChange={(e) => setNameInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && startVoting()}
-                placeholder="Enter your name"
-                className="min-w-0 rounded-2xl border border-white/10 bg-slate-950/50 px-3 py-2 text-sm text-white outline-none ring-indigo-300 transition placeholder:text-slate-500 focus:ring-2"
-              />
+          <CardContent className="space-y-5 p-4 sm:p-5">
+            <div>
+              <SectionHeader icon={UserRound} title="Your vote" subtitle="Enter your name first, then choose normal tap or quick fill." />
+              <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-center">
+                <input
+                  value={nameInput}
+                  onChange={(e) => setNameInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && startVoting()}
+                  placeholder="Enter your name"
+                  className="min-w-0 rounded-2xl border border-white/10 bg-slate-950/50 px-3 py-2 text-sm text-white outline-none ring-indigo-300 transition placeholder:text-slate-500 focus:ring-2"
+                />
 
-              <Button
-                onClick={startVoting}
-                className="rounded-2xl bg-indigo-300 text-slate-950 hover:bg-indigo-200"
-              >
-                Start
-              </Button>
+                <Button
+                  onClick={startVoting}
+                  className="rounded-2xl bg-indigo-300 text-slate-950 hover:bg-indigo-200"
+                >
+                  Start
+                </Button>
 
-              <Button
-                onClick={resetMyVotes}
-                className="rounded-2xl bg-white/10 text-white hover:bg-white/15"
-              >
-                <RotateCcw className="mr-2 inline h-4 w-4" /> Reset my votes
-              </Button>
+                <Button
+                  onClick={resetMyVotes}
+                  className="rounded-2xl bg-white/10 text-white hover:bg-white/15"
+                >
+                  <RotateCcw className="mr-2 inline h-4 w-4" /> Reset my votes
+                </Button>
+              </div>
+
+              {currentPerson && (
+                <div className="mt-3 rounded-2xl bg-indigo-300 px-4 py-3 text-sm font-semibold text-slate-950">
+                  Voting as {currentPerson}
+                </div>
+              )}
             </div>
 
-            {currentPerson && (
-              <div className="mt-3 rounded-2xl bg-indigo-300 px-4 py-3 text-sm font-semibold text-slate-950">
-                Voting as {currentPerson}
+            <div className="rounded-3xl border border-white/10 bg-slate-950/40 p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <SectionHeader
+                  icon={entryMode === "paint" ? Brush : MousePointerClick}
+                  title="Entry mode"
+                  subtitle={
+                    entryMode === "paint"
+                      ? "Quick Fill is on. Choose a pattern, then tap or drag across days to apply it."
+                      : "Normal mode is on. Tap each day to cycle through availability."
+                  }
+                />
               </div>
-            )}
+
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  onClick={() => setEntryMode("cycle")}
+                  className={`rounded-2xl text-sm ${entryMode === "cycle" ? "bg-indigo-300 text-slate-950" : "bg-white/10 text-white hover:bg-white/15"}`}
+                >
+                  <MousePointerClick className="mr-2 inline h-4 w-4" /> Normal tap
+                </Button>
+                <Button
+                  onClick={() => setEntryMode("paint")}
+                  className={`rounded-2xl text-sm ${entryMode === "paint" ? "bg-emerald-300 text-emerald-950" : "bg-white/10 text-white hover:bg-white/15"}`}
+                >
+                  <Brush className="mr-2 inline h-4 w-4" /> Quick Fill
+                </Button>
+              </div>
+
+              {entryMode === "paint" && (
+                <div className="mt-4">
+                  <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    Paint this availability
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    {QUICK_FILL_PATTERNS.map((pattern) => {
+                      const Icon = pattern.Icon;
+                      const selected = selectedPatternId === pattern.id;
+                      return (
+                        <button
+                          key={pattern.id}
+                          onClick={() => setSelectedPatternId(pattern.id)}
+                          className={`flex items-center justify-center gap-2 rounded-2xl border px-3 py-2 text-xs font-semibold transition ${pattern.className} ${selected ? "ring-2 ring-white/70" : "hover:bg-white/10"}`}
+                        >
+                          <Icon className="h-4 w-4" />
+                          {pattern.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-3 rounded-2xl bg-emerald-300/10 px-3 py-2 text-xs leading-5 text-emerald-100">
+                    Tip: press and drag across multiple days to quickly fill them. Select Clear to erase multiple days.
+                  </div>
+                </div>
+              )}
+            </div>
           </CardContent>
         </Card>
 
@@ -963,7 +1093,11 @@ export default function App() {
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
                 <div className="text-lg font-semibold">{monthYearLabel}</div>
-                <div className="text-xs text-slate-400">Morning / Afternoon / Evening</div>
+                <div className="text-xs text-slate-400">
+                  {entryMode === "paint"
+                    ? `Quick Fill: ${selectedPattern.label}`
+                    : "Morning / Afternoon / Evening"}
+                </div>
               </div>
               {currentPerson && (
                 <div className="hidden rounded-full bg-indigo-300 px-3 py-1 text-xs font-semibold text-slate-950 sm:block">
@@ -1004,17 +1138,20 @@ export default function App() {
 
                     <motion.button
                       whileTap={{ scale: 0.96 }}
-                      onClick={() => cycleAvailability(day)}
+                      onClick={() => entryMode === "cycle" && cycleAvailability(day)}
+                      onPointerDown={(event) => handleDayPointerDown(event, day)}
+                      onPointerEnter={() => handleDayPointerEnter(day)}
                       aria-label={`Day ${day}, ${fillLabel(
                         mySlots
                       )}, group score ${totalScore} out of ${maxScore}`}
+                      style={{ touchAction: entryMode === "paint" ? "none" : "manipulation" }}
                       className={`relative min-h-[70px] w-full overflow-hidden rounded-2xl border p-1.5 text-left shadow-lg transition hover:-translate-y-0.5 hover:shadow-indigo-950/40 sm:aspect-square sm:min-h-0 sm:rounded-3xl sm:p-2 ${
                         isToday ? "border-emerald-300/80" : "border-white/10"
                       } ${
                         currentPerson
                           ? "bg-slate-950/50"
                           : "cursor-not-allowed bg-slate-950/30 opacity-70"
-                      }`}
+                      } ${entryMode === "paint" ? "cursor-crosshair" : ""}`}
                     >
                       <div className="absolute inset-0 grid grid-cols-3">
                         {SLOT_ORDER.map((slot) => (
